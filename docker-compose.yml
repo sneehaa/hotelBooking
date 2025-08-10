@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  wallet-service:
+    build: ./wallet-service
+    ports:
+      - "5503:5503"
+    environment:
+      - MONGO_URI=mongodb+srv://adhikarisneha0001:PaRFqCfBsTo6AlIh@cluster0.avtijip.mongodb.net/
+      - HOTEL_OWNER_ID=6898793f7d66b86f2311d5d5
+      - USER_SERVICE_URL=http://user-service:5500/api/user
+    volumes:
+      - ./wallet-service:/app
+    command: ["npx", "nodemon", "--legacy-watch", "index.js"]
+
+  booking-service:
+    build: ./booking-service
+    ports:
+      - "5502:5502"
+    environment:
+      - MONGO_URI=mongodb+srv://adhikarisneha0001:PaRFqCfBsTo6AlIh@cluster0.avtijip.mongodb.net/
+      - HOTEL_SERVICE_URL=http://hotel-service:5501/api/hotel
+      - WALLET_SERVICE_URL=http://wallet-service:5503/api/wallet
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./booking-service:/app
+    command: ["npx", "nodemon", "--legacy-watch", "index.js"]
+    depends_on:
+      - redis
+
+  hotel-service:
+    build: ./hotel-service
+    ports:
+      - "5501:5501"
+    environment:
+      - MONGO_URI=mongodb+srv://adhikarisneha0001:PaRFqCfBsToAlIh@cluster0.avtijip.mongodb.net/
+    volumes:
+      - ./hotel-service:/app
+    command: ["npx", "nodemon", "--legacy-watch", "index.js"]
+
+  user-service:
+    build: ./user-service
+    ports:
+      - "5500:5500"
+    environment:
+      - MONGO_URI=mongodb+srv://adhikarisneha0001:PaRFqCfBsToAlIh@cluster0.avtijip.mongodb.net/
+    volumes:
+      - ./user-service:/app
+    command: ["npx", "nodemon", "--legacy-watch", "index.js"]
