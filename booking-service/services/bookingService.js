@@ -42,18 +42,13 @@ if (cachedData) {
       }
     );
     console.log("Hotel service response data:", response.data);
-
-    // Adjust if your hotel service returns array directly or inside `results`
     results = Array.isArray(response.data) ? response.data : (response.data.results || []);
   } catch (error) {
     console.error("Error fetching hotels from hotel-service:", error.message);
     throw new Error("Failed to fetch hotels from hotel-service");
   }
-
-  // Cache only if results are not empty
   if (results.length > 0) {
     await redisClient.setEx(cacheKey, 300, JSON.stringify(results));
-    console.log("Cached search results in Redis");
   } else {
     console.log("Not caching empty search results");
   }
@@ -91,7 +86,7 @@ exports.createBooking = async ({
 
   const requiredAmount = room.price + 5;
 
-  let balance;
+  let availableBalance;
   try {
     const walletRes = await axios.get(
       `${process.env.WALLET_SERVICE_URL}/balance`,
@@ -100,12 +95,14 @@ exports.createBooking = async ({
       }
     );
 
-    balance = walletRes.data.wallet.balance;
+    availableBalance = walletRes.data.wallet.balance - 
+      (walletRes.data.wallet.holds?.reduce((sum, h) => sum + h.amount, 0) || 0);
+
   } catch (error) {
     throw new Error("Failed to fetch wallet balance from wallet-service");
   }
 
-  if (balance < requiredAmount) {
+  if (availableBalance < requiredAmount) {
     const err = new Error(
       `Insufficient balance. Room costs Rs ${room.price}. You need at least Rs ${requiredAmount}.`
     );
@@ -132,7 +129,6 @@ exports.createBooking = async ({
     error.statusCode = 409;
     throw error;
   }
-
   const newBooking = new Booking({
     hotel: hotelId,
     roomNumber,
@@ -141,8 +137,87 @@ exports.createBooking = async ({
     endDate: end,
     status: "booked",
   });
+  const savedBooking = await newBooking.save();
 
-  return await newBooking.save();
+try {
+  await axios.post(
+    `${process.env.WALLET_SERVICE_URL}/hold`,
+    {
+      bookingId: savedBooking._id.toString(),
+      amount: room.price,
+    },
+    {
+      headers: { Authorization: `Bearer ${userToken}` },
+    }
+  );
+} catch (err) {
+  await Booking.findByIdAndDelete(savedBooking._id);
+  throw new Error(
+    "Failed to hold money in wallet: " +
+      (err.response?.data?.message || err.message)
+  );
+}
+
+
+  return savedBooking;
+};
+
+exports.cancelBooking = async (bookingId, userId, token) => {
+  const booking = await Booking.findById(bookingId);
+
+  if (!booking) throw new Error("Booking not found");
+  if (booking.user.toString() !== userId.toString()) {
+    throw new Error("Unauthorized: You can only cancel your own bookings");
+  }
+  if (booking.status === "paid" || booking.status === "cancelled") {
+    throw new Error("Booking cannot be cancelled in its current state");
+  }
+
+  // Release hold
+  try {
+    await axios.post(
+      `${process.env.WALLET_SERVICE_URL}/release`,
+      { bookingId },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+  } catch (err) {
+    throw new Error(
+      "Failed to release hold in wallet: " +
+        (err.response?.data?.message || err.message)
+    );
+  }
+
+  booking.status = "cancelled";
+  return await booking.save();
+};
+
+exports.payForBooking = async (bookingId, userId, token) => {
+  const booking = await Booking.findById(bookingId);
+
+  if (!booking) throw new Error("Booking not found");
+  if (booking.user.toString() !== userId.toString()) {
+    throw new Error("Unauthorized: You can only pay for your own bookings");
+  }
+  if (booking.status !== "booked") {
+    throw new Error("Booking is not in a payable state");
+  }
+
+  // Confirm hold & transfer funds
+  try {
+    await axios.post(
+      `${process.env.WALLET_SERVICE_URL}/confirm`,
+      { bookingId },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+  } catch (err) {
+    throw new Error(
+      "Payment failed: " +
+        (err.response?.data?.message || err.message)
+    );
+  }
+
+  booking.status = "paid";
+  return await booking.save();
 };
 
 exports.payForBooking = async (bookingId, userId, token) => {

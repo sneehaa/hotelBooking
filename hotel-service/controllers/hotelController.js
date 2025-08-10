@@ -1,23 +1,17 @@
 const hotelService = require('../services/hotelService');
 
 exports.seedHotels = async (req, res) => {
-  console.log('seedHotels controller called'); 
   try {
     await hotelService.seedHotels();
-    console.log('Seeding successful');
     res.status(201).json({ message: 'Hotels and rooms seeded successfully' });
   } catch (err) {
     console.error('Error during seeding:', err.message);
-    // Log the error stack for more info
     console.error(err.stack);
-
-    // Send back the error status and message
     res.status(400).json({ message: err.message });
   }
 };
 
 
-// Get all hotels
 exports.getAllHotels = async (req, res) => {
   try {
     const hotels = await hotelService.getAllHotels();
@@ -35,7 +29,6 @@ exports.getHotelById = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 
 
 exports.searchHotels = async (req, res) => {

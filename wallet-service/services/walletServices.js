@@ -126,3 +126,85 @@ exports.payForBooking = async (userId, amount, role) => {
     session.endSession();
   }
 };
+
+
+exports.holdMoney = async (userId, bookingId, amount) => {
+  console.log(`Attempting to hold money for user ${userId}, booking ${bookingId}, amount ${amount}`);
+  if (!userId || !bookingId) throw new Error("User ID and Booking ID are required");
+  if (!amount || amount <= 0) throw new Error("Amount must be positive");
+
+  const userObjectId = toObjectId(userId);
+  const bookingObjectId = toObjectId(bookingId);
+
+  const wallet = await Wallet.findOne({ userId: userObjectId });
+  if (!wallet) throw new Error("Wallet not found");
+
+  const totalHeld = wallet.holds.reduce((sum, h) => sum + h.amount, 0);
+  const availableBalance = wallet.balance - totalHeld;
+
+  if (availableBalance < amount) throw new Error("Insufficient available balance to hold");
+
+  wallet.holds.push({ bookingId: bookingObjectId, amount });
+  await wallet.save();
+
+  return wallet;
+};
+
+exports.releaseHold = async (userId, bookingId) => {
+  const userObjectId = toObjectId(userId);
+  const bookingObjectId = toObjectId(bookingId);
+
+  const wallet = await Wallet.findOne({ userId: userObjectId });
+  if (!wallet) throw new Error("Wallet not found");
+
+  const beforeCount = wallet.holds.length;
+  wallet.holds = wallet.holds.filter(h => !h.bookingId.equals(bookingObjectId));
+
+  if (wallet.holds.length === beforeCount) {
+    throw new Error("No hold found for given booking");
+  }
+
+  await wallet.save();
+  return wallet;
+};
+
+exports.confirmHold = async (userId, bookingId, role) => {
+  const userObjectId = toObjectId(userId);
+  const ownerObjectId = getOwnerObjectId();
+  const bookingObjectId = toObjectId(bookingId);
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    let userWallet = await Wallet.findOne({ userId: userObjectId }).session(session);
+    let ownerWallet = await Wallet.findOne({ userId: ownerObjectId }).session(session);
+
+    if (!userWallet) throw new Error("User wallet not found");
+    if (!ownerWallet) ownerWallet = new Wallet({ userId: ownerObjectId, balance: 0, role: "admin" });
+
+    const hold = userWallet.holds.find(h => h.bookingId.equals(bookingObjectId));
+    if (!hold) throw new Error("No hold found for this booking");
+
+    if (userWallet.role !== role) {
+      userWallet.role = role;
+    }
+
+    // Deduct from user & credit to owner
+    userWallet.balance -= hold.amount;
+    userWallet.holds = userWallet.holds.filter(h => !h.bookingId.equals(bookingObjectId));
+
+    ownerWallet.balance += hold.amount;
+
+    await userWallet.save({ session });
+    await ownerWallet.save({ session });
+
+    await session.commitTransaction();
+    return true;
+  } catch (err) {
+    await session.abortTransaction();
+    throw err;
+  } finally {
+    session.endSession();
+  }
+};

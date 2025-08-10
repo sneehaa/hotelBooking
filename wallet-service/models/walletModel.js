@@ -16,6 +16,22 @@ const walletSchema = new mongoose.Schema({
     enum: ["user", "admin"],
     required: true,
   },
+  holds: [
+    {
+      bookingId: { 
+        type: mongoose.Schema.Types.ObjectId, 
+        required: true 
+      },
+      amount: { 
+        type: Number, 
+        required: true 
+      },
+      createdAt: { 
+        type: Date, 
+        default: Date.now 
+      }
+    }
+  ]
 });
 
 module.exports = mongoose.model("Wallet", walletSchema);
