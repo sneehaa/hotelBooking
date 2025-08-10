@@ -56,17 +56,30 @@ exports.createBooking = async (req, res) => {
 
 exports.cancelBooking = async (req, res) => {
   try {
-    const booking = await bookingService.cancelBooking(
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ success: false, message: "Authorization token missing" });
+    }
+
+    const cancelledBooking = await bookingService.cancelBooking(
       req.params.id,
       req.user.userId,
-      extractToken(req.headers.authorization)
+      token
     );
-    res.json({ success: true, booking });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ success: false, message: err.message });
+
+    res.status(200).json({ 
+      success: true, 
+      booking: cancelledBooking,
+      message: "Booking cancelled successfully. Hold on funds has been released."
+    });
+  } catch (error) {
+    console.error("Cancellation error:", error);
+    res.status(error.statusCode || 500).json({ 
+      success: false, 
+      message: error.message 
+    });
   }
 };
-
 exports.payForBooking = async (req, res) => {
   try {
     const userId = req.user.userId; 

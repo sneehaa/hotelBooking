@@ -151,20 +151,25 @@ exports.holdMoney = async (userId, bookingId, amount) => {
 };
 
 exports.releaseHold = async (userId, bookingId) => {
+  if (!userId) throw new Error("User ID is required");
+  if (!bookingId) throw new Error("Booking ID is required");
+
   const userObjectId = toObjectId(userId);
   const bookingObjectId = toObjectId(bookingId);
 
   const wallet = await Wallet.findOne({ userId: userObjectId });
   if (!wallet) throw new Error("Wallet not found");
 
-  const beforeCount = wallet.holds.length;
-  wallet.holds = wallet.holds.filter(h => !h.bookingId.equals(bookingObjectId));
-
-  if (wallet.holds.length === beforeCount) {
-    throw new Error("No hold found for given booking");
+  // Find and remove the hold
+  const holdIndex = wallet.holds.findIndex(h => h.bookingId.equals(bookingObjectId));
+  if (holdIndex === -1) {
+    throw new Error("No hold found for this booking");
   }
 
+  // Remove the hold
+  wallet.holds.splice(holdIndex, 1);
   await wallet.save();
+
   return wallet;
 };
 

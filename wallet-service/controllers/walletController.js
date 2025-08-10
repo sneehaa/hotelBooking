@@ -68,7 +68,10 @@ exports.holdMoney = async (req, res) => {
 
 exports.releaseHold = async (req, res) => {
   try {
-    const wallet = await walletService.releaseHold(req.user.id, req.body.bookingId);
+    const wallet = await walletService.releaseHold(
+      req.user.userId, // Get from auth token
+      req.body.bookingId
+    );
     res.json({ success: true, wallet });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });

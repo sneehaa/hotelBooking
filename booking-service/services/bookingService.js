@@ -220,6 +220,64 @@ exports.payForBooking = async (bookingId, userId, token) => {
   return await booking.save();
 };
 
+exports.cancelBooking = async (bookingId, userId, token) => {
+  const booking = await Booking.findById(bookingId);
+  if (!booking) {
+    const error = new Error("Booking not found");
+    throw error;
+  }
+  if (booking.user.toString() !== userId.toString()) {
+    const error = new Error("Unauthorized: You can only cancel your own bookings");
+    throw error;
+  }
+
+  if (booking.status === "cancelled") {
+    const error = new Error("Booking is already cancelled");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (booking.status === "paid") {
+    const error = new Error("Paid bookings cannot be cancelled through this endpoint");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let roomPrice;
+  try {
+    const hotelResponse = await axios.get(
+      `${process.env.HOTEL_SERVICE_URL}/${booking.hotel}`
+    );
+    const room = hotelResponse.data.hotel.rooms.find(
+      r => r.roomNumber === booking.roomNumber
+    );
+    roomPrice = room?.price;
+  } catch (err) {
+    console.error("Failed to fetch room price:", err);
+  }
+
+  try {
+    await axios.post(
+      `${process.env.WALLET_SERVICE_URL}/release`,
+      { bookingId: booking._id.toString() },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+  } catch (err) {
+    console.error("Failed to release hold:", err);
+  }
+  booking.status = "cancelled";
+  booking.cancelledAt = new Date();
+  const updatedBooking = await booking.save();
+  try {
+    const cacheKey = `hotels:${booking.hotel}:${booking.startDate}:${booking.endDate}`;
+    await redisClient.del(cacheKey);
+  } catch (err) {
+    console.error("Failed to clear cache:", err);
+  }
+
+  return updatedBooking;
+};
+
 exports.payForBooking = async (bookingId, userId, token) => {
   const booking = await Booking.findById(bookingId);
 
