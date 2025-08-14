@@ -1,29 +1,22 @@
-// importing
 const express = require('express');
 const dotenv = require('dotenv');
 const connectDB = require('./database/db');
+const rabbitmq = require('./utils/rabbitmq');
+const { setupEventListeners } = require('./events/eventListener');
 
 const app = express();
-
-
 dotenv.config();
-
-
 connectDB();
-
-// Accepting JSON data
 app.use(express.json());
 
-app.get('/', (req, res) => {
-  res.send('Hotel Service is running');
-});
-
+// Routes
 app.use('/api/hotel', require('./routes/hotelRoute'));
+app.get('/', (req, res) => res.send('Hotel Service is running'));
 
-const PORT = process.env.PORT
-
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+// Connect to RabbitMQ & setup listeners
+rabbitmq.connect().then(() => {
+  setupEventListeners();
 });
 
-module.exports = app;
+const PORT = process.env.PORT || 5501;
+app.listen(PORT, () => console.log(`Hotel Service running on port ${PORT}`));

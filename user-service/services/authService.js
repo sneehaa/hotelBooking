@@ -1,57 +1,72 @@
-const User = require('../models/userModel');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcrypt');  
 const jwt = require('jsonwebtoken');
+const { createUser, findUserByEmail, findUserById } = require('../repositories/authRepository');
 
-async function signup({ email, password, isAdmin }) {
-  const existingUser = await User.findOne({ email });
-  if (existingUser) {
-    throw new Error('User already exists');
-  }
+const generateToken = (userId, isAdmin) => {
+    return jwt.sign(
+        { 
+            userId: userId, 
+            role: isAdmin ? 'admin' : 'user'
+        }, 
+        process.env.JWT_SECRET, 
+        { expiresIn: '1h' }
+    );
+};
 
-  const hashedPassword = await bcrypt.hash(password, 10);
+const processSignup = async (userData) => {
+    if (!userData.email || !userData.password) {
+        throw new Error('Email and password are required');
+    }
+    const existingUser = await findUserByEmail(userData.email);
+    if (existingUser) {
+        throw new Error('User already exists');
+    }
+    const newUser = await createUser(userData);
+    const token = generateToken(newUser.id, newUser.isAdmin);
 
-  const newUser = new User({
-    email,
-    password: hashedPassword,
-    isAdmin: isAdmin || false,
-  });
+    return { 
+        user: newUser,
+        token 
+    };
+};
 
-  await newUser.save();
+const processLogin = async (email, password) => {
+    if (!email || !password) {
+        throw new Error('Email and password are required');
+    }
+    const user = await findUserByEmail(email);
+    if (!user) {
+        throw new Error('User not found');
+    }
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+        throw new Error('Invalid credentials');
+    }
+    const token = generateToken(user._id, user.isAdmin);
 
-  const token = jwt.sign(
-  { 
-    userId: newUser._id, 
-    role: newUser.isAdmin ? 'admin' : 'user'   // add role here
-  }, 
-  process.env.JWT_SECRET, 
-  { expiresIn: '1h' }
-);
-
-  return { user: newUser, token };
-}
+    return token;
+};
 
 
-async function login(email, password) {
-  const user = await User.findOne({ email });
-  if (!user) {
-    throw new Error('User not found');
-  }
-  const isPasswordValid = await bcrypt.compare(password, user.password);
-  if (!isPasswordValid) {
-    throw new Error('Invalid credentials');
-  }
- const token = jwt.sign(
-  { 
-    userId: user._id, 
-    role: user.isAdmin ? 'admin' : 'user'   // add role here
-  }, 
-  process.env.JWT_SECRET, 
-  { expiresIn: '1h' }
-);
-  return token;
-}
+const processGetUser = async (userId) => {
+    if (!userId) {
+        throw new Error('Invalid userId');
+    }
+    const user = await findUserById(userId);
+    if (!user) {
+        throw new Error('User not found');
+    }
+    return {
+        id: user._id,
+        email: user.email,
+        isAdmin: user.isAdmin
+    };
+};
+
+
 
 module.exports = {
-  signup,
-  login,
+    processSignup,
+    processLogin,
+    processGetUser
 };

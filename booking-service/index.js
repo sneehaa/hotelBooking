@@ -2,6 +2,8 @@
 const express = require('express');
 const dotenv = require('dotenv');
 const connectDB = require('./database/db');
+const rabbitmq = require('./utils/rabbitmq');
+const { setupEventListeners } = require('./events/eventListener');
 
 const app = express();
 
@@ -14,6 +16,10 @@ connectDB();
 // Accepting JSON data
 
 app.use(express.json());
+
+rabbitmq.connect().then(() => {
+    setupEventListeners();
+});
 
 app.get('/', (req, res) => {
   res.send('Booking Service is running');

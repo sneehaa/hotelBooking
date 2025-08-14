@@ -1,30 +1,18 @@
-// importing
 const express = require('express');
 const dotenv = require('dotenv');
 const connectDB = require('./database/db');
-
-const app = express();
-
+const walletService = require('./services/walletServices');
 
 dotenv.config();
-
-
 connectDB();
 
-// Accepting JSON data
-
+const app = express();
 app.use(express.json());
 
-app.get('/', (req, res) => {
-  res.send('Wallet Service is running');
-});
-
+app.get('/', (req, res) => res.send('Wallet Service Running'));
 app.use('/api/wallet', require('./routes/walletRoutes'));
 
-const PORT = process.env.PORT
+walletService.setupEventListeners();
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
-
-module.exports = app;
+const PORT = process.env.PORT || 5503;
+app.listen(PORT, () => console.log(`Wallet service running on port ${PORT}`));

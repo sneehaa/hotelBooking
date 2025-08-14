@@ -1,88 +1,59 @@
-const mongoose = require("mongoose");
-const Wallet = require("../models/walletModel");
-const axios = require("axios");
-
+const mongoose = require('mongoose');
+const walletRepo = require('../repositories/walletRepository');
+const redisClient = require('../utils/redisClient');
+const rabbitmq = require('../utils/rabbitmq');
 
 const HOTEL_OWNER_ID = process.env.HOTEL_OWNER_ID;
-const USER_SERVICE_URL = process.env.USER_SERVICE_URL;
-
-if (!HOTEL_OWNER_ID) {
-  throw new Error("HOTEL_OWNER_ID environment variable is not set.");
-}
 
 function toObjectId(id) {
-  try {
-    return new mongoose.Types.ObjectId(id);
-  } catch {
-    throw new Error(`Invalid ObjectId: ${id}`);
-  }
+  return new mongoose.Types.ObjectId(id);
 }
 
 function getOwnerObjectId() {
   return toObjectId(HOTEL_OWNER_ID.trim());
 }
 
-async function fetchUserInfo(userId) {
-  try {
-    const res = await axios.get(`${USER_SERVICE_URL}/users/${userId}`);
-    return res.data.user;
-  } catch (err) {
-    console.error("[WalletService] Failed to fetch user info:", err.message);
-    return null;
-  }
+async function updateCache(wallet) {
+  if (!wallet) return;
+  await redisClient.setEx(`wallet:${wallet.userId}`, 300, JSON.stringify(wallet));
+}
+
+async function getFromCache(userId) {
+  const cached = await redisClient.get(`wallet:${userId}`);
+  return cached ? JSON.parse(cached) : null;
 }
 
 exports.loadMoney = async (userId, amount, role) => {
-
-  if (!amount || amount <= 0) throw new Error("Amount must be a positive number");
-  if (!userId) throw new Error("User ID is required");
-
   const userObjectId = toObjectId(userId);
+  let wallet = await walletRepo.findByUserId(userObjectId);
 
-  let wallet = await Wallet.findOne({ userId: userObjectId });
-
-  if (!wallet) {
-    wallet = new Wallet({ userId: userObjectId, balance: amount, role });
-  } else {
+  if (!wallet) wallet = await walletRepo.createWallet({ userId: userObjectId, balance: amount, role });
+  else {
     wallet.balance += amount;
-    if (wallet.role !== role) {
-      wallet.role = role;
-    }
+    wallet.role = role;
+    await walletRepo.updateWallet(wallet);
   }
 
-  const savedWallet = await wallet.save();
-  return savedWallet;
+  await updateCache(wallet);
+  return wallet;
 };
 
 exports.getWallet = async (userId) => {
-  if (!userId) throw new Error("User ID is required");
+  const cached = await getFromCache(userId);
+  if (cached) return cached;
 
-  const userObjectId = toObjectId(userId);
-  const wallet = await Wallet.findOne({ userId: userObjectId });
-  if (!wallet) throw new Error("Wallet not found");
+  const wallet = await walletRepo.findByUserId(toObjectId(userId));
+  if (!wallet) throw new Error('Wallet not found');
+  await updateCache(wallet);
   return wallet;
 };
 
 exports.getAllWallets = async () => {
-  const wallets = await Wallet.find();
-  const walletsWithUser = await Promise.all(
-    wallets.map(async (wallet) => {
-      const userInfo = await fetchUserInfo(wallet.userId.toString());
-      return {
-        ...wallet.toObject(),
-        user: userInfo,
-      };
-    })
-  );
-
-  return walletsWithUser;
+  const wallets = await walletRepo.getAllWallets();
+  return wallets;
 };
 
 exports.payForBooking = async (userId, amount, role) => {
-  if (!userId) throw new Error("User ID is required");
-  if (!amount || amount <= 0) throw new Error("Amount must be a positive number");
-  if (!role) throw new Error("Role is required");
-
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -90,119 +61,91 @@ exports.payForBooking = async (userId, amount, role) => {
     const userObjectId = toObjectId(userId);
     const ownerObjectId = getOwnerObjectId();
 
-    let userWallet = await Wallet.findOne({ userId: userObjectId }).session(session);
-    if (!userWallet) {
-      throw new Error("User wallet not found");
-    }
+    let userWallet = await walletRepo.findByUserId(userObjectId).session(session);
+    if (!userWallet) throw new Error('User wallet not found');
 
-    let ownerWallet = await Wallet.findOne({ userId: ownerObjectId }).session(session);
-    if (!ownerWallet) {
-      ownerWallet = new Wallet({ userId: ownerObjectId, balance: 0, role: "admin" });
-    }
+    let ownerWallet = await walletRepo.findByUserId(ownerObjectId).session(session);
+    if (!ownerWallet) ownerWallet = await walletRepo.createWallet({ userId: ownerObjectId, balance: 0, role: 'admin' });
 
-    if (userWallet.role !== role) {
-      userWallet.role = role;
-    }
-
-    if (userWallet.balance < amount) {
-      throw new Error("Insufficient balance");
-    }
+    if (userWallet.balance < amount) throw new Error('Insufficient balance');
 
     userWallet.balance -= amount;
     ownerWallet.balance += amount;
 
-    await userWallet.save({ session });
-    await ownerWallet.save({ session });
+    await walletRepo.updateWallet(userWallet);
+    await walletRepo.updateWallet(ownerWallet);
+
+    await updateCache(userWallet);
+    await updateCache(ownerWallet);
 
     await session.commitTransaction();
-    console.log("[WalletService] Payment successful: user wallet debited, owner wallet credited");
+
+    // Publish payment event
+    await rabbitmq.publish('wallet_events_exchange', 'booking.paid.confirmed', { userId, amount });
 
     return true;
-  } catch (error) {
+  } catch (err) {
     await session.abortTransaction();
-    console.error("[WalletService] Transaction aborted due to error:", error.message);
-    throw error;
+    throw err;
   } finally {
     session.endSession();
   }
 };
 
-
+// Hold money
 exports.holdMoney = async (userId, bookingId, amount) => {
-  console.log(`Attempting to hold money for user ${userId}, booking ${bookingId}, amount ${amount}`);
-  if (!userId || !bookingId) throw new Error("User ID and Booking ID are required");
-  if (!amount || amount <= 0) throw new Error("Amount must be positive");
-
   const userObjectId = toObjectId(userId);
-  const bookingObjectId = toObjectId(bookingId);
-
-  const wallet = await Wallet.findOne({ userId: userObjectId });
-  if (!wallet) throw new Error("Wallet not found");
+  const wallet = await walletRepo.findByUserId(userObjectId);
+  if (!wallet) throw new Error('Wallet not found');
 
   const totalHeld = wallet.holds.reduce((sum, h) => sum + h.amount, 0);
   const availableBalance = wallet.balance - totalHeld;
+  if (availableBalance < amount) throw new Error('Insufficient available balance');
 
-  if (availableBalance < amount) throw new Error("Insufficient available balance to hold");
+  wallet.holds.push({ bookingId: toObjectId(bookingId), amount });
+  await walletRepo.updateWallet(wallet);
+  await updateCache(wallet);
 
-  wallet.holds.push({ bookingId: bookingObjectId, amount });
-  await wallet.save();
+  // Publish hold confirmation event
+  await rabbitmq.publish('wallet_events_exchange', 'booking.hold.confirmed', { userId, bookingId, amount });
 
   return wallet;
 };
 
 exports.releaseHold = async (userId, bookingId) => {
-  if (!userId) throw new Error("User ID is required");
-  if (!bookingId) throw new Error("Booking ID is required");
-
   const userObjectId = toObjectId(userId);
-  const bookingObjectId = toObjectId(bookingId);
+  const wallet = await walletRepo.findByUserId(userObjectId);
+  if (!wallet) throw new Error('Wallet not found');
 
-  const wallet = await Wallet.findOne({ userId: userObjectId });
-  if (!wallet) throw new Error("Wallet not found");
-
-  // Find and remove the hold
-  const holdIndex = wallet.holds.findIndex(h => h.bookingId.equals(bookingObjectId));
-  if (holdIndex === -1) {
-    throw new Error("No hold found for this booking");
-  }
-
-  // Remove the hold
-  wallet.holds.splice(holdIndex, 1);
-  await wallet.save();
-
+  wallet.holds = wallet.holds.filter(h => !h.bookingId.equals(toObjectId(bookingId)));
+  await walletRepo.updateWallet(wallet);
+  await updateCache(wallet);
   return wallet;
 };
 
 exports.confirmHold = async (userId, bookingId, role) => {
-  const userObjectId = toObjectId(userId);
-  const ownerObjectId = getOwnerObjectId();
-  const bookingObjectId = toObjectId(bookingId);
-
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    let userWallet = await Wallet.findOne({ userId: userObjectId }).session(session);
-    let ownerWallet = await Wallet.findOne({ userId: ownerObjectId }).session(session);
+    const userObjectId = toObjectId(userId);
+    const ownerObjectId = getOwnerObjectId();
 
-    if (!userWallet) throw new Error("User wallet not found");
-    if (!ownerWallet) ownerWallet = new Wallet({ userId: ownerObjectId, balance: 0, role: "admin" });
+    let userWallet = await walletRepo.findByUserId(userObjectId).session(session);
+    let ownerWallet = await walletRepo.findByUserId(ownerObjectId).session(session);
+    if (!ownerWallet) ownerWallet = await walletRepo.createWallet({ userId: ownerObjectId, balance: 0, role: 'admin' });
 
-    const hold = userWallet.holds.find(h => h.bookingId.equals(bookingObjectId));
-    if (!hold) throw new Error("No hold found for this booking");
+    const hold = userWallet.holds.find(h => h.bookingId.equals(toObjectId(bookingId)));
+    if (!hold) throw new Error('No hold found');
 
-    if (userWallet.role !== role) {
-      userWallet.role = role;
-    }
-
-    // Deduct from user & credit to owner
     userWallet.balance -= hold.amount;
-    userWallet.holds = userWallet.holds.filter(h => !h.bookingId.equals(bookingObjectId));
-
+    userWallet.holds = userWallet.holds.filter(h => !h.bookingId.equals(toObjectId(bookingId)));
     ownerWallet.balance += hold.amount;
 
-    await userWallet.save({ session });
-    await ownerWallet.save({ session });
+    await walletRepo.updateWallet(userWallet);
+    await walletRepo.updateWallet(ownerWallet);
+    await updateCache(userWallet);
+    await updateCache(ownerWallet);
 
     await session.commitTransaction();
     return true;
@@ -212,4 +155,28 @@ exports.confirmHold = async (userId, bookingId, role) => {
   } finally {
     session.endSession();
   }
+};
+
+// Event listener setup
+exports.setupEventListeners = () => {
+  rabbitmq.consume(
+    'booking_requests_exchange',
+    'booking_request_queue',
+    'booking.request',
+    async (data) => {
+      const { userId, amount } = data;
+      try { await exports.holdMoney(userId, data.bookingId, amount); } 
+      catch (err) { console.error(err); }
+    }
+  );
+
+  rabbitmq.consume(
+    'booking_requests_exchange',
+    'booking_cancel_queue',
+    'booking.cancel',
+    async (data) => {
+      try { await exports.releaseHold(data.userId, data.bookingId); } 
+      catch (err) { console.error(err); }
+    }
+  );
 };
