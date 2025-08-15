@@ -37,13 +37,14 @@ class BookingService {
         return await bookingRepo.findById(bookingId);
     }
 
-    async _handleBookingCreation({ userId, hotelId, roomNumber, startDate, endDate, authToken }) {
+    async createPendingBooking({ userId, hotelId, roomNumber, startDate, endDate }) {
         const isAvailable = await this.checkRoomAvailability(hotelId, roomNumber, startDate, endDate);
-        if (!isAvailable) throw new Error('Requested room is not available for the specified dates.');
+        if (!isAvailable) {
+            throw new Error('Requested room is not available for the specified dates.');
+        }
 
         const price = await this.getRoomPrice(hotelId, roomNumber);
-        const requiredAmount = price + 5;
-
+        
         let booking = null;
         try {
             booking = await bookingRepo.create({
@@ -55,53 +56,42 @@ class BookingService {
                 price: price,
                 status: 'pending'
             });
-            console.log(`[Booking Service] Pending booking created in DB with ID: ${booking._id}`);
+            console.log(`[Booking Service] Pending booking created with ID: ${booking._id}`);
+            return booking;
         } catch (dbError) {
             console.error("Error saving booking to database:", dbError);
             throw new Error("Failed to save booking details to database.");
         }
+    }
 
+
+    async processBookingRequest({ bookingId, userId, authToken }) {
+        console.log(`[Booking Service] Processing async booking for ID: ${bookingId}`);
+        let booking = null;
         try {
-            console.log(`[Booking Service] Attempting to hold funds for booking ID: ${booking._id.toString()} with amount: ${requiredAmount}`);
+            booking = await bookingRepo.findById(bookingId);
+            if (!booking) {
+                console.error(`Booking with ID: ${bookingId} not found.`);
+                return;
+            }
+
+            const requiredAmount = booking.price + 5;
+
+            await bookingRepo.updateStatus(bookingId, 'processing');
+            console.log(`[Booking Service] Attempting to hold funds for booking ID: ${bookingId} with amount: ${requiredAmount}`);
+
             await axios.post(
                 `${process.env.WALLET_SERVICE_URL}/hold`,
-                { bookingId: booking._id.toString(), userId, amount: requiredAmount },
+                { bookingId: bookingId, userId, amount: requiredAmount },
                 { headers: { Authorization: authToken || process.env.SYSTEM_WALLET_TOKEN } }
             );
-            console.log(`[Booking Service] Funds held successfully for booking ID: ${booking._id}`);
-            
-            booking = await bookingRepo.updateStatus(booking._id, 'booked');
-            return booking;
-
-        } catch (walletError) {
-            console.error("Error holding funds:", walletError.response?.data || walletError.message);
-            const walletErrorMessage = walletError.response?.data?.message || walletError.message;
-
-            if (booking) {
-                await bookingRepo.updateStatus(booking._id, 'failed');
-            }
-            throw new Error(`Payment processing failed: ${walletErrorMessage}`);
-        }
-    }
-
-    async createBooking(userId, hotelId, roomNumber, startDate, endDate, authToken) {
-        return await this._handleBookingCreation({ userId, hotelId, roomNumber, startDate, endDate, authToken });
-    }
-
-    async processBookingRequest({ userId, hotelId, roomNumber, startDate, endDate, authToken }) {
-        console.log("Processing async booking request...");
-        try {
-            const booking = await this._handleBookingCreation({
-                userId,
-                hotelId,
-                roomNumber,
-                startDate,
-                endDate,
-                authToken: authToken
-            });
-            console.log(`Async booking completed: ${booking._id}`);
+            console.log(`[Booking Service] Funds hold request successful for booking ID: ${bookingId}. Awaiting confirmation.`);
         } catch (err) {
-            console.error("Async booking failed:", err.message);
+            console.error(`[Booking Service] Async booking failed for ID: ${bookingId}:`, err.response?.data || err.message);
+            const walletErrorMessage = err.response?.data?.message || err.message;
+            if (booking) {
+                await bookingRepo.updateStatus(bookingId, 'failed');
+            }
         }
     }
 

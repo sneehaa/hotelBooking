@@ -18,14 +18,30 @@ exports.searchAvailableHotels = async (req, res) => {
 exports.createBooking = async (req, res) => {
     try {
         const userId = req.user.userId;
-        const authToken = req.headers.authorization; 
+        const authToken = req.headers.authorization;
         const { hotelId, roomNumber, startDate, endDate } = req.body;
-        console.log(`[Booking Controller] Create booking request received for userId: ${userId}, hotelId: ${hotelId}, room: ${roomNumber}, dates: ${startDate} to ${endDate}`);
+        console.log(`[Booking Controller] Async booking request received for userId: ${userId}, hotelId: ${hotelId}, room: ${roomNumber}, dates: ${startDate} to ${endDate}`);
 
-        const booking = await bookingService.createBooking(userId, hotelId, roomNumber, startDate, endDate, authToken);
-        
-        console.log(`[Booking Controller] Booking successfully created for booking ID: ${booking._id}`);
-        res.status(201).json({ success: true, message: 'Booking created successfully', booking });
+        const booking = await bookingService.createPendingBooking({
+            userId,
+            hotelId,
+            roomNumber,
+            startDate,
+            endDate,
+        });
+
+        await rabbitmq.publish(
+            BOOKING_EXCHANGE,
+            'booking.request',
+            { bookingId: booking._id.toString(), userId, authToken }
+        );
+
+        console.log(`[Booking Controller] Booking request published to RabbitMQ for booking ID: ${booking._id}`);
+        res.status(202).json({ 
+            success: true, 
+            message: 'Booking request accepted for processing. Check booking status for updates.', 
+            bookingId: booking._id 
+        });
     } catch (err) {
         console.error("[Booking Controller] Booking creation error:", err.message);
         res.status(400).json({ success: false, message: err.message });
