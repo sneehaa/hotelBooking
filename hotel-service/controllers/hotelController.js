@@ -1,4 +1,5 @@
 const hotelService = require('../services/hotelService');
+const hotelRepo = require('../repositories/hotelRepository');
 
 exports.seedHotels = async (req, res) => {
   try {
@@ -36,5 +37,28 @@ exports.searchHotels = async (req, res) => {
     res.status(200).json(hotels);
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+};
+
+
+
+
+exports.getRoomPrice = async (req, res) => {
+  try {
+    const { hotelId, roomNumber } = req.params;
+
+    const hotel = await hotelRepo.findById(hotelId);
+    if (!hotel) {
+      return res.status(404).json({ success: false, message: 'Hotel not found' });
+    }
+
+    const room = hotel.rooms.find(r => r.roomNumber == roomNumber);
+    if (!room) {
+      return res.status(404).json({ success: false, message: 'Room not found' });
+    }
+
+    res.json({ success: true, price: room.price });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };

@@ -1,97 +1,90 @@
 const bookingService = require('../services/bookingService');
+const rabbitmq = require('../utils/rabbitmq');
+const WALLET_EXCHANGE = 'wallet_events_exchange';
+const BOOKING_EXCHANGE = 'booking_requests_exchange';
 
 exports.searchAvailableHotels = async (req, res) => {
     try {
         const { location, startDate, endDate } = req.query;
+        console.log(`[Booking Controller] Search request received for location: ${location}, dates: ${startDate} to ${endDate}`);
         const results = await bookingService.searchAvailableHotels(location, startDate, endDate);
         res.status(200).json({ success: true, results });
-    } catch (error) {
-        res.status(400).json({ success: false, message: error.message });
+    } catch (err) {
+        console.error("[Booking Controller] Error in searchAvailableHotels:", err.message);
+        res.status(400).json({ success: false, message: err.message });
     }
 };
 
 exports.createBooking = async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const { hotelId, roomNumber, startDate, endDate } = req.body;
-    
-    // First check room availability
-    const isAvailable = await bookingService.checkRoomAvailability(
-      hotelId, 
-      roomNumber,
-      startDate,
-      endDate
-    );
-    
-    if (!isAvailable) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Room not available for selected dates" 
-      });
+    try {
+        const userId = req.user.userId;
+        const authToken = req.headers.authorization; 
+        const { hotelId, roomNumber, startDate, endDate } = req.body;
+        console.log(`[Booking Controller] Create booking request received for userId: ${userId}, hotelId: ${hotelId}, room: ${roomNumber}, dates: ${startDate} to ${endDate}`);
+
+        const booking = await bookingService.createBooking(userId, hotelId, roomNumber, startDate, endDate, authToken);
+        
+        console.log(`[Booking Controller] Booking successfully created for booking ID: ${booking._id}`);
+        res.status(201).json({ success: true, message: 'Booking created successfully', booking });
+    } catch (err) {
+        console.error("[Booking Controller] Booking creation error:", err.message);
+        res.status(400).json({ success: false, message: err.message });
     }
-    
-    // Then verify wallet balance
-    const price = await bookingService.getRoomPrice(hotelId, roomNumber);
-    const requiredAmount = price + 5; // service fee
-    
-    const hasSufficientFunds = await bookingService.checkWalletBalance(
-      userId,
-      requiredAmount
-    );
-    
-    if (!hasSufficientFunds) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Insufficient funds in wallet" 
-      });
-    }
-    
-    const booking = await bookingService.createBooking(
-      userId,
-      hotelId,
-      roomNumber,
-      startDate,
-      endDate,
-      price
-    );
-    
-    res.status(201).json({ 
-      success: true, 
-      booking,
-      message: "Booking created successfully" 
-    });
-  } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
-  }
 };
+
+exports.getBookingsByUser = async (req, res) => {
+    try {
+        const userId = req.params.userId;
+        console.log(`[Booking Controller] Get bookings by user request received for userId: ${userId}`);
+        if (req.params.userId !== req.user.userId) {
+            return res.status(403).json({ message: "Forbidden" });
+        }
+        const bookings = await bookingService.getBookingsByUser(req.params.userId);
+        res.status(200).json({ success: true, bookings });
+    } catch (err) {
+        console.error("[Booking Controller] Error in getBookingsByUser:", err.message);
+        res.status(400).json({ success: false, message: err.message });
+    }
+};
+
 exports.cancelBooking = async (req, res) => {
     try {
         const userId = req.user.userId;
-        await bookingService.requestCancellation(userId, req.params.id);
-        res.status(202).json({ success: true, message: "Cancellation request received" });
-    } catch (error) {
-        res.status(400).json({ success: false, message: error.message });
+        const bookingId = req.params.id;
+        console.log(`[Booking Controller] Cancel booking request received for bookingId: ${bookingId}, userId: ${userId}`);
+        await bookingService.cancelBooking({ bookingId: bookingId, userId: userId });
+        console.log(`[Booking Controller] Cancellation request sent for bookingId: ${bookingId}`);
+        res.status(202).json({ success: true, message: "Cancellation request sent" });
+    } catch (err) {
+        console.error("[Booking Controller] Error in cancelBooking:", err.message);
+        res.status(400).json({ success: false, message: err.message });
     }
 };
 
 exports.payForBooking = async (req, res) => {
     try {
         const userId = req.user.userId;
-        await bookingService.requestPayment(userId, req.params.bookingId);
-        res.status(202).json({ success: true, message: "Payment request received" });
-    } catch (error) {
-        res.status(400).json({ success: false, message: error.message });
-    }
-};
+        const bookingId = req.params.bookingId;
+        console.log(`[Booking Controller] Pay for booking request received for bookingId: ${bookingId}, userId: ${userId}`);
 
-exports.getBookingsByUser = async (req, res) => {
-    try {
-        if (req.params.userId !== req.user.userId) {
-            return res.status(403).json({ message: "Forbidden" });
+        const booking = await bookingService.findById(bookingId);
+        if (!booking) {
+            console.error(`[Booking Controller] Booking ${bookingId} not found for payment.`);
+            return res.status(404).json({ success: false, message: "Booking not found." });
         }
-        const bookings = await bookingService.getBookingsByUser(req.params.userId);
-        res.status(200).json({ success: true, bookings });
+        const amountToPay = booking.price + 5; 
+        console.log(`[Booking Controller] Fetching booking ${bookingId} to get payment amount. Amount: ${amountToPay}`);
+
+        await rabbitmq.publish(
+            WALLET_EXCHANGE,
+            "wallet.payment.request",
+            { bookingId, userId, amount: amountToPay }
+        );
+        console.log(`[Booking Controller] Payment request published to RabbitMQ for bookingId: ${bookingId}`);
+        res.status(202).json({ success: true, message: "Payment request sent" });
+
     } catch (error) {
+        console.error("[Booking Controller] Payment request error:", error.message);
         res.status(400).json({ success: false, message: error.message });
     }
 };

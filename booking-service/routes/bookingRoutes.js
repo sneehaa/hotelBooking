@@ -9,4 +9,5 @@ router.post('/:id/cancel', authGuard, bookingController.cancelBooking);
 router.post('/pay/:bookingId', authGuard, bookingController.payForBooking);
 router.get('/user/:userId', authGuard, bookingController.getBookingsByUser);
 
+
 module.exports = router;

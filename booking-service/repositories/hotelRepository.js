@@ -2,6 +2,22 @@ const axios = require('axios');
 const redisClient = require('../utils/redisClient');
 
 class HotelRepository {
+    async getRoomPrice(hotelId, roomNumber) {
+    try {
+      const { data } = await axios.get(`${process.env.HOTEL_SERVICE_URL}/hotels/${hotelId}/rooms/${roomNumber}`, {
+        timeout: 5000
+      });
+      
+      if (!data || !data.price) {
+        throw new Error('Invalid room data received');
+      }
+      
+      return data.price;
+    } catch (error) {
+      console.error("Failed to get room price:", error.message);
+      throw new Error(`Could not fetch room price: ${error.message}`);
+    }
+  }
     async searchAvailableHotels(location, startDate, endDate) {
         const key = `hotels:${location}:${startDate}:${endDate}`;
         const cached = await redisClient.get(key);

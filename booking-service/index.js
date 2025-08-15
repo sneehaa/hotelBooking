@@ -5,6 +5,7 @@ const connectDB = require('./database/db');
 const rabbitmq = require('./utils/rabbitmq');
 const { setupEventListeners } = require('./events/eventListener');
 
+
 const app = express();
 
 
@@ -24,6 +25,7 @@ rabbitmq.connect().then(() => {
 app.get('/', (req, res) => {
   res.send('Booking Service is running');
 });
+
 
 app.use('/api/booking', require('./routes/bookingRoutes'));
 

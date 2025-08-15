@@ -1,53 +1,124 @@
 const bookingRepo = require('../repositories/bookingRepository');
 const hotelRepo = require('../repositories/hotelRepository');
 const rabbitmq = require('../utils/rabbitmq');
+const axios = require('axios');
 
 const BOOKING_EXCHANGE = 'booking_requests_exchange';
 const WALLET_EXCHANGE = 'wallet_events_exchange';
 
 class BookingService {
-  async searchAvailableHotels(location, startDate, endDate) {
-    return await hotelRepo.searchAvailableHotels(location, startDate, endDate);
-  }
+    async searchAvailableHotels(location, startDate, endDate) {
+        return await hotelRepo.searchAvailableHotels(location, startDate, endDate);
+    }
 
-  async requestBooking(userId, hotelId, roomNumber, startDate, endDate) {
-    await rabbitmq.publish(BOOKING_EXCHANGE, 'booking.request', { userId, hotelId, roomNumber, startDate, endDate });
-  }
+    async checkRoomAvailability(hotelId, roomNumber, startDate, endDate) {
+        const conflict = await bookingRepo.findConflictingBooking(
+            hotelId,
+            roomNumber,
+            startDate,
+            endDate
+        );
+        return !conflict;
+    }
 
-  async requestCancellation(userId, bookingId) {
-    await rabbitmq.publish(BOOKING_EXCHANGE, 'booking.cancel', { userId, bookingId });
-  }
+    async getRoomPrice(hotelId, roomNumber) {
+        try {
+            const res = await axios.get(
+                `${process.env.HOTEL_SERVICE_URL}/hotels/${hotelId}/rooms/${roomNumber}/price`
+            );
+            return res.data.price;
+        } catch (err) {
+            console.error("Error fetching room price:", err.response?.data || err.message);
+            throw new Error("Failed to fetch room price from hotel service.");
+        }
+    }
 
-  async requestPayment(userId, bookingId) {
-    const booking = await bookingRepo.findById(bookingId);
-    if (!booking || booking.user.toString() !== userId) throw new Error('Unauthorized or booking not found');
-    if (booking.status !== 'booked') throw new Error('Booking not payable');
-    await rabbitmq.publish(WALLET_EXCHANGE, 'wallet.pay', { bookingId, userId });
-  }
+    async findById(bookingId) {
+        return await bookingRepo.findById(bookingId);
+    }
 
-  async getBookingsByUser(userId) { return await bookingRepo.findByUser(userId); }
+    async _handleBookingCreation({ userId, hotelId, roomNumber, startDate, endDate, authToken }) {
+        const isAvailable = await this.checkRoomAvailability(hotelId, roomNumber, startDate, endDate);
+        if (!isAvailable) throw new Error('Requested room is not available for the specified dates.');
 
-  // Event-driven handlers
-  async processBookingRequest({ hotelId, roomNumber, userId, startDate, endDate }) {
-    const conflict = await bookingRepo.findConflictingBooking(hotelId, roomNumber, startDate, endDate);
-    if (conflict) throw new Error('Room already booked');
+        const price = await this.getRoomPrice(hotelId, roomNumber);
+        const requiredAmount = price + 5;
 
-    const price = await hotelRepo.getRoomPrice(hotelId, roomNumber);
-    const booking = await bookingRepo.create({ hotel: hotelId, roomNumber, user: userId, startDate, endDate, status: 'pending' });
+        let booking = null;
+        try {
+            booking = await bookingRepo.create({
+                hotel: hotelId,
+                roomNumber,
+                user: userId,
+                startDate,
+                endDate,
+                price: price,
+                status: 'pending'
+            });
+            console.log(`[Booking Service] Pending booking created in DB with ID: ${booking._id}`);
+        } catch (dbError) {
+            console.error("Error saving booking to database:", dbError);
+            throw new Error("Failed to save booking details to database.");
+        }
 
-    await rabbitmq.publish(WALLET_EXCHANGE, 'wallet.hold', { bookingId: booking._id.toString(), userId, amount: price });
-  }
+        try {
+            console.log(`[Booking Service] Attempting to hold funds for booking ID: ${booking._id.toString()} with amount: ${requiredAmount}`);
+            await axios.post(
+                `${process.env.WALLET_SERVICE_URL}/hold`,
+                { bookingId: booking._id.toString(), userId, amount: requiredAmount },
+                { headers: { Authorization: authToken || process.env.SYSTEM_WALLET_TOKEN } }
+            );
+            console.log(`[Booking Service] Funds held successfully for booking ID: ${booking._id}`);
+            
+            booking = await bookingRepo.updateStatus(booking._id, 'booked');
+            return booking;
 
-  async confirmHold({ bookingId }) { await bookingRepo.updateStatus(bookingId, 'booked'); }
-  async confirmPayment({ bookingId }) { await bookingRepo.updateStatus(bookingId, 'paid'); }
+        } catch (walletError) {
+            console.error("Error holding funds:", walletError.response?.data || walletError.message);
+            const walletErrorMessage = walletError.response?.data?.message || walletError.message;
 
-  async cancelBooking({ bookingId, userId }) {
-    const booking = await bookingRepo.findById(bookingId);
-    if (!booking || booking.user.toString() !== userId) throw new Error('Unauthorized or booking not found');
-    if (['cancelled', 'paid'].includes(booking.status)) throw new Error('Cannot cancel booking');
-    await rabbitmq.publish(WALLET_EXCHANGE, 'wallet.release', { bookingId });
-    await bookingRepo.updateStatus(bookingId, 'cancelled');
-  }
+            if (booking) {
+                await bookingRepo.updateStatus(booking._id, 'failed');
+            }
+            throw new Error(`Payment processing failed: ${walletErrorMessage}`);
+        }
+    }
+
+    async createBooking(userId, hotelId, roomNumber, startDate, endDate, authToken) {
+        return await this._handleBookingCreation({ userId, hotelId, roomNumber, startDate, endDate, authToken });
+    }
+
+    async processBookingRequest({ userId, hotelId, roomNumber, startDate, endDate, authToken }) {
+        console.log("Processing async booking request...");
+        try {
+            const booking = await this._handleBookingCreation({
+                userId,
+                hotelId,
+                roomNumber,
+                startDate,
+                endDate,
+                authToken: authToken
+            });
+            console.log(`Async booking completed: ${booking._id}`);
+        } catch (err) {
+            console.error("Async booking failed:", err.message);
+        }
+    }
+
+    async getBookingsByUser(userId) { return await bookingRepo.findByUser(userId); }
+
+    async cancelBooking({ bookingId, userId }) {
+        const booking = await bookingRepo.findById(bookingId);
+        if (!booking || booking.user.toString() !== userId) throw new Error('Unauthorized or booking not found');
+        if (['cancelled', 'paid'].includes(booking.status)) throw new Error('Cannot cancel booking');
+
+        await rabbitmq.publish(WALLET_EXCHANGE, 'wallet.release', { bookingId });
+        await bookingRepo.updateStatus(bookingId, 'cancelled');
+    }
+
+    async confirmHold({ bookingId }) { await bookingRepo.updateStatus(bookingId, 'booked'); }
+    async failHold({ bookingId, reason }) { await bookingRepo.updateStatus(bookingId, 'failed'); }
+    async confirmPayment({ bookingId }) { await bookingRepo.updateStatus(bookingId, 'paid'); }
 }
 
 module.exports = new BookingService();
