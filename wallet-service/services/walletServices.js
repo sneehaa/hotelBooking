@@ -137,15 +137,17 @@ exports.holdMoney = async (userId, bookingId, amount) => {
 exports.releaseHold = async (userId, bookingId) => {
     const userObjectId = toObjectId(userId);
     const wallet = await walletRepo.findByUserId(userObjectId);
-    if (!wallet) {
-        throw new Error('Wallet not found');
-    }
+    if (!wallet) throw new Error('Wallet not found');
 
+    const bookingObjectId = toObjectId(bookingId); 
     const initialHoldsCount = wallet.holds.length;
-    wallet.holds = wallet.holds.filter(h => !h.bookingId.equals(toObjectId(bookingId)));
+
+    wallet.holds = wallet.holds.filter(h => {
+        return !h.bookingId.equals(bookingObjectId);
+    });
 
     if (wallet.holds.length === initialHoldsCount) {
-        // No hold found to release, can just log or return without error
+        console.warn(`No hold found for bookingId ${bookingId} to release`);
     }
 
     await walletRepo.updateWallet(wallet);
@@ -155,6 +157,7 @@ exports.releaseHold = async (userId, bookingId) => {
 
     return wallet;
 };
+
 
 exports.confirmHold = async (userId, bookingId, role) => {
     const session = await mongoose.startSession();

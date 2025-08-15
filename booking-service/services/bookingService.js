@@ -71,7 +71,7 @@ class BookingService {
         try {
             booking = await bookingRepo.findById(bookingId);
             if (!booking) {
-                console.error(`Booking with ID: ${bookingId} not found.`);
+                console.error(`[Booking Service] Booking with ID: ${bookingId} not found during async processing.`);
                 return;
             }
 
@@ -85,30 +85,57 @@ class BookingService {
                 { bookingId: bookingId, userId, amount: requiredAmount },
                 { headers: { Authorization: authToken || process.env.SYSTEM_WALLET_TOKEN } }
             );
-            console.log(`[Booking Service] Funds hold request successful for booking ID: ${bookingId}. Awaiting confirmation.`);
+            console.log(`[Booking Service] Funds hold request successful for booking ID: ${bookingId}. Awaiting confirmation from Wallet Service.`);
         } catch (err) {
             console.error(`[Booking Service] Async booking failed for ID: ${bookingId}:`, err.response?.data || err.message);
-            const walletErrorMessage = err.response?.data?.message || err.message;
             if (booking) {
                 await bookingRepo.updateStatus(bookingId, 'failed');
+                console.log(`[Booking Service] Booking ID: ${bookingId} status updated to 'failed' due to error.`);
             }
         }
     }
 
     async getBookingsByUser(userId) { return await bookingRepo.findByUser(userId); }
 
-    async cancelBooking({ bookingId, userId }) {
-        const booking = await bookingRepo.findById(bookingId);
-        if (!booking || booking.user.toString() !== userId) throw new Error('Unauthorized or booking not found');
-        if (['cancelled', 'paid'].includes(booking.status)) throw new Error('Cannot cancel booking');
-
-        await rabbitmq.publish(WALLET_EXCHANGE, 'wallet.release', { bookingId });
-        await bookingRepo.updateStatus(bookingId, 'cancelled');
+  async cancelBooking({ bookingId, userId }) {
+    const booking = await bookingRepo.findById(bookingId);
+    if (!booking) {
+        console.warn(`Cancellation failed: Booking ID ${bookingId} not found.`);
+        throw new Error('Booking not found');
     }
 
-    async confirmHold({ bookingId }) { await bookingRepo.updateStatus(bookingId, 'booked'); }
-    async failHold({ bookingId, reason }) { await bookingRepo.updateStatus(bookingId, 'failed'); }
-    async confirmPayment({ bookingId }) { await bookingRepo.updateStatus(bookingId, 'paid'); }
+    if (booking.user.toString() !== userId) {
+        console.warn(`Cancellation failed: User ID ${userId} not authorized for booking ID ${bookingId}.`);
+        throw new Error('Unauthorized');
+    }
+
+    if (['cancelled', 'paid'].includes(booking.status)) {
+        console.warn(`Cancellation failed: Booking ID ${bookingId} is already '${booking.status}'.`);
+        throw new Error('Cannot cancel booking');
+    }
+
+    console.log(`Publishing 'wallet.release' for booking ID: ${bookingId}`);
+    await rabbitmq.publish(WALLET_EXCHANGE, 'wallet.release', { bookingId, userId });
+    
+    await bookingRepo.updateStatus(bookingId, 'cancelled');
+    console.log(`Booking ID: ${bookingId} cancelled successfully.`);
+}
+
+
+    async confirmHold({ bookingId }) { 
+        console.log(`[Booking Service] Confirming hold for booking ID: ${bookingId}. Setting status to 'booked'.`);
+        await bookingRepo.updateStatus(bookingId, 'booked'); 
+    }
+    
+    async failHold({ bookingId, reason }) { 
+        console.log(`[Booking Service] Hold failed for booking ID: ${bookingId}. Reason: ${reason}. Setting status to 'failed'.`);
+        await bookingRepo.updateStatus(bookingId, 'failed'); 
+    }
+    
+    async confirmPayment({ bookingId }) { 
+        console.log(`[Booking Service] Confirming payment for booking ID: ${bookingId}. Setting status to 'paid'.`);
+        await bookingRepo.updateStatus(bookingId, 'paid'); 
+    }
 }
 
 module.exports = new BookingService();

@@ -1,4 +1,3 @@
-// controllers/authController.js
 const { 
     processSignup, 
     processLogin, 

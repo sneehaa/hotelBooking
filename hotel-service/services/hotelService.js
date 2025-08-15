@@ -27,7 +27,6 @@ class HotelService {
       },
     ];
 
-    // Use Promise.all to create each hotel individually.
     return await Promise.all(
       hotelsToSeed.map((hotel) => hotelRepository.createHotel(hotel))
     );
@@ -79,22 +78,18 @@ class HotelService {
     return hotels;
   }
 
-  // Event-driven handlers
+
   async handleBookingRequest({ hotelId, roomNumber, bookingId }) {
-    // Mark room as unavailable
     await hotelRepository.updateRoomAvailability(hotelId, roomNumber, false);
 
-    // Confirm room hold
     await rabbitmq.publish(HOTEL_EXCHANGE, "hotel.room.hold.confirmed", {
       bookingId,
     });
   }
 
   async handleBookingCancel({ hotelId, roomNumber, bookingId }) {
-    // Mark room as available
     await hotelRepository.updateRoomAvailability(hotelId, roomNumber, true);
 
-    // Confirm cancellation
     await rabbitmq.publish(HOTEL_EXCHANGE, "hotel.room.cancelled", {
       bookingId,
     });

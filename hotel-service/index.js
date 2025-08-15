@@ -9,11 +9,10 @@ dotenv.config();
 connectDB();
 app.use(express.json());
 
-// Routes
+
 app.use('/api/hotel', require('./routes/hotelRoute'));
 app.get('/', (req, res) => res.send('Hotel Service is running'));
 
-// Connect to RabbitMQ & setup listeners
 rabbitmq.connect().then(() => {
   setupEventListeners();
 });

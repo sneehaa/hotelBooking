@@ -67,15 +67,19 @@ exports.cancelBooking = async (req, res) => {
     try {
         const userId = req.user.userId;
         const bookingId = req.params.id;
-        console.log(`[Booking Controller] Cancel booking request received for bookingId: ${bookingId}, userId: ${userId}`);
-        await bookingService.cancelBooking({ bookingId: bookingId, userId: userId });
-        console.log(`[Booking Controller] Cancellation request sent for bookingId: ${bookingId}`);
-        res.status(202).json({ success: true, message: "Cancellation request sent" });
+
+        console.log(`Cancel booking request received: bookingId=${bookingId}, userId=${userId}`);
+
+        await bookingService.cancelBooking({ bookingId, userId });
+
+        console.log(`Cancellation processed: bookingId=${bookingId}. Wallet release triggered.`);
+        res.status(202).json({ success: true, message: "Cancellation request accepted for processing" });
     } catch (err) {
-        console.error("[Booking Controller] Error in cancelBooking:", err.message);
+        console.error(`Error in cancelBooking: ${err.message}`);
         res.status(400).json({ success: false, message: err.message });
     }
 };
+
 
 exports.payForBooking = async (req, res) => {
     try {

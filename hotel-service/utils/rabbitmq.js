@@ -3,7 +3,7 @@ const amqp = require('amqplib');
 let connection;
 let channel;
 
-// Retry helper to wait for RabbitMQ to be ready
+
 async function waitForChannel(retries = 10, delay = 3000) {
   for (let i = 0; i < retries; i++) {
     if (channel) return channel;
