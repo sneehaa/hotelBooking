@@ -31,7 +31,7 @@ async function getFromCache(userId) {
     return cached ? JSON.parse(cached) : null;
 }
 
-// Load money into wallet
+
 exports.loadMoney = async (userId, amount, role) => {
     const userObjectId = toObjectId(userId);
     let wallet = await walletRepo.findByUserId(userObjectId);
@@ -48,7 +48,7 @@ exports.loadMoney = async (userId, amount, role) => {
     return wallet;
 };
 
-// Get wallet details
+
 exports.getWallet = async (userId) => {
     const cached = await getFromCache(userId);
     if (cached) return cached;
@@ -60,12 +60,12 @@ exports.getWallet = async (userId) => {
     return wallet;
 };
 
-// Get all wallets (admin only)
+
 exports.getAllWallets = async () => {
     return await walletRepo.getAllWallets();
 };
 
-// Hold money for booking
+
 exports.holdMoney = async (userId, bookingId, amount) => {
     const wallet = await walletRepo.findByUserId(toObjectId(userId));
     if (!wallet) throw new Error('Wallet not found');
@@ -83,7 +83,7 @@ exports.holdMoney = async (userId, bookingId, amount) => {
     return wallet;
 };
 
-// Release a hold
+
 exports.releaseHold = async (userId, bookingId) => {
     const wallet = await walletRepo.findByUserId(toObjectId(userId));
     if (!wallet) throw new Error('Wallet not found');
@@ -97,7 +97,7 @@ exports.releaseHold = async (userId, bookingId) => {
     return wallet;
 };
 
-// Confirm hold and transfer to hotel owner
+
 exports.confirmHold = async (userId, bookingId, role) => {
     const session = await mongoose.startSession();
     session.startTransaction();

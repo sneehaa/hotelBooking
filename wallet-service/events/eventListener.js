@@ -49,7 +49,6 @@ exports.setupEventListeners = () => {
     }
   );
 
-  // Release money
   rabbitmq.consume(
     WALLET_EXCHANGE,
     "wallet_release_request_queue",
@@ -64,7 +63,7 @@ exports.setupEventListeners = () => {
     }
   );
 
-  // Confirm payment
+ 
   rabbitmq.consume(
     WALLET_EXCHANGE,
     "wallet_payment_request_queue",
