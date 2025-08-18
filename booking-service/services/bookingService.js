@@ -1,6 +1,7 @@
 const bookingRepo = require("../repositories/bookingRepository");
 const hotelRepo = require("../repositories/hotelRepository");
 const rabbitmq = require("../utils/rabbitmq");
+const redisClient = require("../utils/redisClient");
 const axios = require("axios");
 
 const BOOKING_REQUEST_EXCHANGE = "booking_requests_exchange";
@@ -8,9 +9,47 @@ const WALLET_EXCHANGE = "wallet_events_exchange";
 const BOOKING_EVENTS_EXCHANGE = "booking_events_exchange";
 
 class BookingService {
+
   async searchAvailableHotels(location, startDate, endDate) {
-    return await hotelRepo.searchAvailableHotels(location, startDate, endDate);
+  // 1️⃣ Fetch hotels from Hotel Service (or cache)
+  const key = `hotels:search:${location.toLowerCase()}`;
+  let hotels = await redisClient.get(key);
+  
+  if (hotels) {
+    hotels = JSON.parse(hotels);
+  } else {
+    const { data } = await axios.get(
+      `${process.env.HOTEL_SERVICE_URL}/search`,
+      { params: { location } }
+    );
+    hotels = Array.isArray(data) ? data : data.results || [];
+    if (hotels.length) {
+      await redisClient.setEx(key, 300, JSON.stringify(hotels));
+    }
   }
+
+  const results = await Promise.all(
+    hotels.map(async (hotel) => {
+      const roomsWithAvailability = await Promise.all(
+        hotel.rooms.map(async (room) => {
+          if (!room.isAvailable) return { ...room, isAvailable: false };
+          
+          const conflict = await bookingRepo.findConflictingBooking(
+            hotel._id,
+            room.roomNumber,
+            startDate,
+            endDate
+          );
+          return { ...room, isAvailable: !conflict };
+        })
+      );
+      return { ...hotel, rooms: roomsWithAvailability };
+    })
+  );
+
+  return results;
+}
+
 
   async checkRoomAvailability(hotelId, roomNumber, startDate, endDate) {
     const conflict = await bookingRepo.findConflictingBooking(
@@ -101,12 +140,21 @@ class BookingService {
     return true;
   }
 
-  async createPendingBooking({ userId, hotelId, roomNumber, startDate, endDate }) {
+  async createPendingBooking({
+    userId,
+    hotelId,
+    roomNumber,
+    startDate,
+    endDate,
+  }) {
     try {
       await this.validateBookingDates(startDate, endDate);
 
       const isAvailable = await this.checkRoomAvailability(
-        hotelId, roomNumber, startDate, endDate
+        hotelId,
+        roomNumber,
+        startDate,
+        endDate
       );
       if (!isAvailable) throw new Error("Requested room is not available");
 
@@ -122,9 +170,24 @@ class BookingService {
         status: "pending",
       });
 
+      console.log(
+        `[BookingService] Publishing booking.created event for hotel ${hotelId}, room ${roomNumber}`
+      );
+
+      // Publish event for hotel service to update availability
+      await rabbitmq.publish(BOOKING_EVENTS_EXCHANGE, "booking.created", {
+        bookingId: booking._id.toString(),
+        hotelId: booking.hotel.toString(),
+        roomNumber: booking.roomNumber,
+        startDate: booking.startDate,
+        endDate: booking.endDate,
+        userId,
+        action: "create", // Added to distinguish from cancellations
+      });
+
       const [userDetails, hotelDetails] = await Promise.all([
         this.getUserDetails(userId),
-        this.getHotelDetails(hotelId),
+        this.getHotelDetails(booking.hotel.toString()),
       ]);
 
       await rabbitmq.publish(
@@ -147,6 +210,7 @@ class BookingService {
 
       return booking;
     } catch (err) {
+      console.error("[BookingService] Error in createPendingBooking:", err);
       throw err;
     }
   }
@@ -164,7 +228,11 @@ class BookingService {
       await axios.post(
         `${process.env.WALLET_SERVICE_URL}/hold`,
         { bookingId, userId, amount: requiredAmount },
-        { headers: { Authorization: authToken || process.env.SYSTEM_WALLET_TOKEN } }
+        {
+          headers: {
+            Authorization: authToken || process.env.SYSTEM_WALLET_TOKEN,
+          },
+        }
       );
     } catch (err) {
       if (booking) await bookingRepo.updateStatus(bookingId, "failed");
@@ -180,9 +248,13 @@ class BookingService {
     if (!booking) throw new Error("Booking not found");
 
     if (booking.user.toString() !== userId) throw new Error("Unauthorized");
-    if (["cancelled", "paid"].includes(booking.status)) throw new Error("Cannot cancel booking");
+    if (["cancelled", "paid"].includes(booking.status))
+      throw new Error("Cannot cancel booking");
 
-    await rabbitmq.publish(WALLET_EXCHANGE, "wallet.release", { bookingId, userId });
+    await rabbitmq.publish(WALLET_EXCHANGE, "wallet.release", {
+      bookingId,
+      userId,
+    });
     await bookingRepo.updateStatus(bookingId, "cancelled");
 
     const [userDetails, hotelDetails] = await Promise.all([
@@ -190,22 +262,18 @@ class BookingService {
       this.getHotelDetails(booking.hotel.toString()),
     ]);
 
-    await rabbitmq.publish(
-      BOOKING_EVENTS_EXCHANGE,
-      "booking.cancelled",
-      {
-        bookingId: booking._id.toString(),
-        userEmail: userDetails.userEmail,
-        userName: userDetails.userName,
-        hotelName: hotelDetails.hotelName,
-        roomNumber: booking.roomNumber,
-        startDate: booking.startDate,
-        endDate: booking.endDate,
-        price: booking.price,
-        status: "cancelled",
-        cancellationDate: new Date().toISOString(),
-      }
-    );
+    await rabbitmq.publish(BOOKING_EVENTS_EXCHANGE, "booking.cancelled", {
+      bookingId: booking._id.toString(),
+      userEmail: userDetails.userEmail,
+      userName: userDetails.userName,
+      hotelName: hotelDetails.hotelName,
+      roomNumber: booking.roomNumber,
+      startDate: booking.startDate,
+      endDate: booking.endDate,
+      price: booking.price,
+      status: "cancelled",
+      cancellationDate: new Date().toISOString(),
+    });
   }
 
   async confirmHold({ bookingId }) {
@@ -236,35 +304,34 @@ class BookingService {
   }
 
   async confirmPayment({ bookingId, userId, amount }) {
-  await bookingRepo.updateStatus(bookingId, "paid");
-  const booking = await bookingRepo.findById(bookingId);
-  if (!booking) return;
+    await bookingRepo.updateStatus(bookingId, "paid");
+    const booking = await bookingRepo.findById(bookingId);
+    if (!booking) return;
 
-  const [userDetails, hotelDetails] = await Promise.all([
-    this.getUserDetails(userId),
-    this.getHotelDetails(booking.hotel.toString())
-  ]);
+    const [userDetails, hotelDetails] = await Promise.all([
+      this.getUserDetails(userId),
+      this.getHotelDetails(booking.hotel.toString()),
+    ]);
 
-  // Publish event for email service
-  await rabbitmq.publish(
-    BOOKING_EVENTS_EXCHANGE,
-    "booking.payment.confirmed",
-    {
-      bookingId: booking._id.toString(),
-      userEmail: userDetails.userEmail,
-      bookingDetails: {
+    // Publish event for email service
+    await rabbitmq.publish(
+      BOOKING_EVENTS_EXCHANGE,
+      "booking.payment.confirmed",
+      {
         bookingId: booking._id.toString(),
-        hotelName: hotelDetails.hotelName,
-        startDate: booking.startDate,
-        endDate: booking.endDate,
-        price: booking.price,
-        userName: userDetails.userName,
-        paymentMethod: 'Wallet Payment'
-      },
-    }
-  );
-}
-
+        userEmail: userDetails.userEmail,
+        bookingDetails: {
+          bookingId: booking._id.toString(),
+          hotelName: hotelDetails.hotelName,
+          startDate: booking.startDate,
+          endDate: booking.endDate,
+          price: booking.price,
+          userName: userDetails.userName,
+          paymentMethod: "Wallet Payment",
+        },
+      }
+    );
+  }
 }
 
 const bookingService = new BookingService();

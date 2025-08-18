@@ -1,11 +1,19 @@
 const hotelService = require('../services/hotelService');
 const hotelRepo = require('../repositories/hotelRepository');
 
+
 exports.seedHotels = async (req, res) => {
     try {
-        const user = req.user;
-        if (!user || !user.isAdmin) {
-            return res.status(403).json({ message: "Forbidden: Only administrators can perform this action." });
+        console.log('User auth status:', {
+            userId: req.user.id,
+            isAdmin: req.user.isAdmin
+        });
+
+        if (!req.user?.isAdmin) {
+            return res.status(403).json({ 
+                message: "Admin access required",
+                userAuthStatus: req.user 
+            });
         }
 
         await hotelService.seedHotels();
@@ -14,7 +22,6 @@ exports.seedHotels = async (req, res) => {
         res.status(400).json({ message: err.message });
     }
 };
-
 exports.getAllHotels = async (req, res) => {
   try {
     const hotels = await hotelService.getAllHotels();

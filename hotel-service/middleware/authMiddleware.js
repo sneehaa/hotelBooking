@@ -1,10 +1,10 @@
 const jwt = require('jsonwebtoken');
 
-const authGuard = (req, res, next) => {
+// Middleware to authenticate user via JWT
+exports.authGuard = (req, res, next) => {
   try {
-    // 1. Extract and verify token
     const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({
         success: false,
         message: "Authorization header missing or malformed!"
@@ -14,7 +14,7 @@ const authGuard = (req, res, next) => {
     const token = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // 2. Standardize user object structure
+    // Standardize user object for downstream use
     req.user = {
       id: decoded.userId,
       isAdmin: decoded.role === 'admin' || decoded.isAdmin === true
@@ -30,8 +30,8 @@ const authGuard = (req, res, next) => {
   }
 };
 
-// Admin check middleware (use after authGuard)
-const adminGuard = (req, res, next) => {
+// Middleware to restrict access to admins
+exports.adminGuard = (req, res, next) => {
   if (!req.user?.isAdmin) {
     return res.status(403).json({
       success: false,
@@ -44,3 +44,4 @@ const adminGuard = (req, res, next) => {
   }
   next();
 };
+

@@ -3,6 +3,7 @@ const bookingService = require("../services/bookingService");
 
 const BOOKING_REQUEST_EXCHANGE = "booking_requests_exchange";
 const WALLET_EXCHANGE = "wallet_events_exchange";
+const BOOKING_EVENTS_EXCHANGE = "booking_events_exchange";
 
 exports.setupEventListeners = () => {
   rabbitmq.consume(

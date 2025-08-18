@@ -1,3 +1,5 @@
+
+
 const amqp = require('amqplib');
 
 let connection;
@@ -18,7 +20,6 @@ async function connect() {
     const amqpUrl = process.env.RABBITMQ_URL || 'amqp://localhost';
     connection = await amqp.connect(amqpUrl);
     channel = await connection.createChannel();
-    await channel.assertExchange(process.env.RABBITMQ_EXCHANGE, 'topic', { durable: true });
     console.log('Connected to RabbitMQ');
   } catch (error) {
     console.error('Error connecting to RabbitMQ:', error);
@@ -29,6 +30,9 @@ async function connect() {
 async function publishMessage(routingKey, message) {
   if (!channel) await waitForChannel();
   try {
+    // Assert the exchange before publishing
+    await channel.assertExchange(process.env.RABBITMQ_EXCHANGE, 'topic', { durable: true });
+    
     await channel.publish(
       process.env.RABBITMQ_EXCHANGE,
       routingKey,
@@ -42,12 +46,15 @@ async function publishMessage(routingKey, message) {
   }
 }
 
-async function consumeMessages(queue, routingKey, callback) {
+async function consumeMessages(exchange, queue, routingKey, callback) {
   if (!channel) await waitForChannel();
 
   try {
+    // ⚠️ CRITICAL FIX: Assert the exchange here before binding the queue
+    await channel.assertExchange(exchange, 'topic', { durable: true });
+
     const assertedQueue = await channel.assertQueue(queue, { durable: true, exclusive: false });
-    await channel.bindQueue(assertedQueue.queue, process.env.RABBITMQ_EXCHANGE, routingKey);
+    await channel.bindQueue(assertedQueue.queue, exchange, routingKey);
 
     console.log(`Waiting for messages in ${queue} with routing key ${routingKey}`);
 

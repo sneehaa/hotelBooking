@@ -1,4 +1,4 @@
-const Hotel = require('../models/hotelModel');
+const Hotel = require("../models/hotelModel");
 
 class HotelRepository {
   async createHotel(data) {
@@ -14,18 +14,42 @@ class HotelRepository {
   }
 
   async findByLocation(location) {
-    return await Hotel.find({ location: { $regex: new RegExp(location, "i") } });
+    return await Hotel.find({
+      location: { $regex: new RegExp(location, "i") },
+    });
   }
 
   async updateRoomAvailability(hotelId, roomNumber, isAvailable) {
-    const hotel = await Hotel.findById(hotelId);
-    if (!hotel) throw new Error("Hotel not found");
+    try {
+      const result = await Hotel.findOneAndUpdate(
+        {
+          _id: hotelId,
+          "rooms.roomNumber": roomNumber,
+        },
+        {
+          $set: { "rooms.$.isAvailable": isAvailable },
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
 
-    const room = hotel.rooms.find(r => r.roomNumber === roomNumber);
-    if (!room) throw new Error("Room not found");
+      if (!result) {
+        throw new Error(`Room ${roomNumber} not found in hotel ${hotelId}`);
+      }
 
-    room.isAvailable = isAvailable;
-    return await hotel.save();
+      console.log(
+        `[HotelRepository] Updated availability for room ${roomNumber} in hotel ${hotelId} to ${isAvailable}`
+      );
+      return result;
+    } catch (error) {
+      console.error(
+        "[HotelRepository] Error updating room availability:",
+        error
+      );
+      throw error;
+    }
   }
 }
 

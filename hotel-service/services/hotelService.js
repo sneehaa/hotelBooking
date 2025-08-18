@@ -1,4 +1,4 @@
-const hotelRepository = require("../repositories/hotelRepository");
+ const hotelRepository = require("../repositories/hotelRepository");
 const redisClient = require("../utils/redisClient");
 const rabbitmq = require("../utils/rabbitmq");
 
@@ -24,6 +24,11 @@ class HotelService {
         name: "Hotel Chitwan Jungle",
         location: "Chitwan",
         rooms: this.generateRooms(301, 5),
+      },
+      {
+        name: "Sauraha Inn",
+        location: "Sauraha",
+        rooms: this.generateRooms(401, 5),
       },
     ];
 
@@ -78,21 +83,79 @@ class HotelService {
     return hotels;
   }
 
+  async handleBookingCreated({ hotelId, roomNumber, bookingId, action = "create" }) {
+    console.log(`[HotelService] Handling booking ${action} for hotel ${hotelId}, room ${roomNumber}`);
 
-  async handleBookingRequest({ hotelId, roomNumber, bookingId }) {
-    await hotelRepository.updateRoomAvailability(hotelId, roomNumber, false);
+    try {
+      const hotel = await hotelRepository.findById(hotelId);
+      if (!hotel) throw new Error("Hotel not found");
 
-    await rabbitmq.publish(HOTEL_EXCHANGE, "hotel.room.hold.confirmed", {
-      bookingId,
-    });
+      const roomIndex = hotel.rooms.findIndex(r => r.roomNumber === roomNumber);
+      if (roomIndex === -1) throw new Error("Room not found");
+
+      hotel.rooms[roomIndex].isAvailable = false;
+      await hotel.save();
+
+      const cacheKeys = [
+        `hotels:all`,
+        `hotel:${hotelId}`,
+        `hotels:search:${hotel.location.toLowerCase()}`,
+      ];
+
+      await Promise.all(cacheKeys.map(key => redisClient.del(key)));
+
+      console.log(`[HotelService] Successfully updated availability for room ${roomNumber} in hotel ${hotelId}`);
+      return true;
+    } catch (error) {
+      console.error(`[HotelService] Error handling booking ${action}:`, error);
+      throw error;
+    }
   }
 
   async handleBookingCancel({ hotelId, roomNumber, bookingId }) {
-    await hotelRepository.updateRoomAvailability(hotelId, roomNumber, true);
+    const hotel = await hotelRepository.findById(hotelId);
+    if (!hotel) throw new Error("Hotel not found");
 
-    await rabbitmq.publish(HOTEL_EXCHANGE, "hotel.room.cancelled", {
-      bookingId,
-    });
+    const roomIndex = hotel.rooms.findIndex(r => r.roomNumber === roomNumber);
+    if (roomIndex === -1) throw new Error("Room not found");
+
+    hotel.rooms[roomIndex].isAvailable = true;
+    await hotel.save();
+
+    const cacheKeys = [
+      `hotels:all`,
+      `hotel:${hotelId}`,
+      `hotels:search:${hotel.location.toLowerCase()}`,
+    ];
+
+    await Promise.all(cacheKeys.map(key => redisClient.del(key)));
+
+    await rabbitmq.publish(HOTEL_EXCHANGE, "hotel.room.cancelled", { bookingId });
+
+    console.log(`[HotelService] Successfully cancelled booking for room ${roomNumber} in hotel ${hotelId}`);
+    return true;
+  }
+
+  // -----------------------------
+  // NEW METHOD: Reset all room availability
+  // -----------------------------
+  async resetRoomAvailability(hotelId) {
+    const hotel = await hotelRepository.findById(hotelId);
+    if (!hotel) throw new Error("Hotel not found");
+
+    hotel.rooms = hotel.rooms.map(room => ({ ...room.toObject(), isAvailable: true }));
+    await hotel.save();
+
+    const cacheKeys = [
+      `hotels:all`,
+      `hotel:${hotelId}`,
+      `hotels:search:${hotel.location.toLowerCase()}`,
+    ];
+
+    await Promise.all(cacheKeys.map(key => redisClient.del(key)));
+
+    console.log(`[HotelService] Reset all rooms to available for hotel ${hotelId}`);
+    return true;
   }
 }
 
