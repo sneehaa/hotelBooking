@@ -136,9 +136,6 @@ class HotelService {
     return true;
   }
 
-  // -----------------------------
-  // NEW METHOD: Reset all room availability
-  // -----------------------------
   async resetRoomAvailability(hotelId) {
     const hotel = await hotelRepository.findById(hotelId);
     if (!hotel) throw new Error("Hotel not found");

@@ -27,7 +27,6 @@ async function main() {
       }
     }
 
-    console.log('✅ All hotel rooms reset to available');
 
     if (redisClient && redisClient.quit) {
       try {

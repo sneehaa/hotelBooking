@@ -11,13 +11,12 @@ const BOOKING_EVENTS_EXCHANGE = "booking_events_exchange";
 class BookingService {
 
   async searchAvailableHotels(location, startDate, endDate) {
-  // 1️⃣ Fetch hotels from Hotel Service (or cache)
   const key = `hotels:search:${location.toLowerCase()}`;
   let hotels = await redisClient.get(key);
   
   if (hotels) {
     hotels = JSON.parse(hotels);
-  } else {
+  } else {xw
     const { data } = await axios.get(
       `${process.env.HOTEL_SERVICE_URL}/search`,
       { params: { location } }
@@ -174,7 +173,6 @@ class BookingService {
         `[BookingService] Publishing booking.created event for hotel ${hotelId}, room ${roomNumber}`
       );
 
-      // Publish event for hotel service to update availability
       await rabbitmq.publish(BOOKING_EVENTS_EXCHANGE, "booking.created", {
         bookingId: booking._id.toString(),
         hotelId: booking.hotel.toString(),
@@ -182,7 +180,7 @@ class BookingService {
         startDate: booking.startDate,
         endDate: booking.endDate,
         userId,
-        action: "create", // Added to distinguish from cancellations
+        action: "create",
       });
 
       const [userDetails, hotelDetails] = await Promise.all([
@@ -313,7 +311,7 @@ class BookingService {
       this.getHotelDetails(booking.hotel.toString()),
     ]);
 
-    // Publish event for email service
+    // publishing event for email service
     await rabbitmq.publish(
       BOOKING_EVENTS_EXCHANGE,
       "booking.payment.confirmed",
