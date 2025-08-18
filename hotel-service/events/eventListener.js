@@ -28,7 +28,7 @@ exports.setupEventListeners = () => {
     async (msg) => {
       console.log("[HotelListener] Received booking.cancelled event:", msg);
       try {
-        await hotelService.handleBookingCancelled(msg);
+        await hotelService.handleBookingCancel(msg);
       } catch (error) {
         console.error(
           "[HotelListener] Error processing booking.cancelled:",
