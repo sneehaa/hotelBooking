@@ -24,9 +24,9 @@ services:
   email-service: 
     build: ./email-service
     environment:
-      - RABBITMQ_URL=amqp://rabbitmq:5672
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
       - EMAIL_USER=adhikarisneha0001@gmail.com
-      - EMAIL_PASS=koqycslmnunmthqnx
+      - EMAIL_PASS=tgdn wowg ojaa ekxf
     volumes:
       - ./email-service:/app
     command: ["npx", "nodemon", "--legacy-watch", "src/index.js"]
@@ -62,6 +62,7 @@ services:
       - MONGO_URI=mongodb+srv://adhikarisneha0001:PaRFqCfBsTo6AlIh@cluster0.avtijip.mongodb.net/
       - HOTEL_SERVICE_URL=http://hotel-service:5501/api/hotel
       - WALLET_SERVICE_URL=http://wallet-service:5503/api/wallet
+      - USER_SERVICE_URL=http://user-service:5500/api/user
       - REDIS_URL=redis://redis:6379
       - RABBITMQ_URL=amqp://rabbitmq:5672
       - RABBITMQ_EXCHANGE=booking_exchange

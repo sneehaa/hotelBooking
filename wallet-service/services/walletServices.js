@@ -4,6 +4,7 @@ const walletRepo = require('../repositories/walletRepository');
 const redisClient = require('../utils/redisClient');
 const rabbitmq = require('../utils/rabbitmq');
 
+
 const HOTEL_OWNER_ID = process.env.HOTEL_OWNER_ID;
 const WALLET_EXCHANGE = 'wallet_events_exchange';
 
@@ -98,39 +99,36 @@ exports.releaseHold = async (userId, bookingId) => {
 };
 
 
-exports.confirmHold = async (userId, bookingId, role) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-    try {
-        const userWallet = await walletRepo.findByUserId(toObjectId(userId), session);
-        if (!userWallet) throw new Error('User wallet not found');
+exports.confirmHold = async ({ bookingId, userId, amount }) => {
+  const userObjectId = toObjectId(userId);
+  const wallet = await walletRepo.findByUserId(userObjectId);
+  if (!wallet) throw new Error(`Wallet not found for user ${userId}`);
 
-        const ownerWalletId = getOwnerObjectId();
-        let ownerWallet = await walletRepo.findByUserId(ownerWalletId, session);
-        if (!ownerWallet) {
-            ownerWallet = await walletRepo.createWallet({ userId: ownerWalletId, balance: 0, role: 'admin' }, session);
-        }
+  const hold = wallet.holds.find(h => h.bookingId.toString() === bookingId.toString());
+  if (!hold) throw new Error(`Hold not found for booking ${bookingId}`);
 
-        const holdIndex = userWallet.holds.findIndex(h => h.bookingId.equals(toObjectId(bookingId)));
-        if (holdIndex === -1) throw new Error('No hold found');
+  if (wallet.balance < amount) throw new Error('Insufficient funds in wallet');
 
-        const hold = userWallet.holds[holdIndex];
-        userWallet.balance -= hold.amount;
-        userWallet.holds.splice(holdIndex, 1);
-        ownerWallet.balance += hold.amount;
 
-        await walletRepo.updateWallet(userWallet, session);
-        await walletRepo.updateWallet(ownerWallet, session);
+  wallet.balance -= amount;
+  wallet.holds = wallet.holds.filter(h => h.bookingId.toString() !== bookingId.toString());
+  await wallet.save();
+  await updateCache(wallet);
+  console.log(`[Wallet] Hold confirmed. User balance=${wallet.balance}`);
 
-        await updateCache(userWallet);
-        await updateCache(ownerWallet);
+  const adminWalletId = getOwnerObjectId();
+  let adminWallet = await walletRepo.findByUserId(adminWalletId);
+  if (!adminWallet) {
+    adminWallet = await walletRepo.createWallet({ userId: adminWalletId, balance: amount, role: "admin" });
+  } else {
+    adminWallet.balance += amount;
+    await walletRepo.updateWallet(adminWallet);
+  }
+  await updateCache(adminWallet);
+  console.log(`[Wallet] Admin credited. Admin balance=${adminWallet.balance}`);
 
-        await session.commitTransaction();
-        return true;
-    } catch (err) {
-        await session.abortTransaction();
-        throw err;
-    } finally {
-        session.endSession();
-    }
+  await rabbitmq.publish(WALLET_EXCHANGE, 'wallet.hold.confirmed', { bookingId, userId, amount });
+  await rabbitmq.publish(WALLET_EXCHANGE, 'wallet.payment.confirmed', { bookingId, userId, amount });
+
+  return { success: true, balance: wallet.balance };
 };

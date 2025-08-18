@@ -2,12 +2,17 @@ const hotelService = require('../services/hotelService');
 const hotelRepo = require('../repositories/hotelRepository');
 
 exports.seedHotels = async (req, res) => {
-  try {
-    await hotelService.seedHotels();
-    res.status(201).json({ message: "Hotels seeded successfully" });
-  } catch (err) {
-    res.status(400).json({ message: err.message });
-  }
+    try {
+        const user = req.user;
+        if (!user || !user.isAdmin) {
+            return res.status(403).json({ message: "Forbidden: Only administrators can perform this action." });
+        }
+
+        await hotelService.seedHotels();
+        res.status(201).json({ message: "Hotels seeded successfully" });
+    } catch (err) {
+        res.status(400).json({ message: err.message });
+    }
 };
 
 exports.getAllHotels = async (req, res) => {
@@ -19,14 +24,21 @@ exports.getAllHotels = async (req, res) => {
   }
 };
 
+
 exports.getHotelById = async (req, res) => {
-  try {
-    const hotel = await hotelService.getHotelById(req.params.id);
-    res.status(200).json({ hotel });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+    try {
+        const hotel = await hotelRepo.findById(req.params.id);
+        if (!hotel) {
+            return res.status(404).json({ message: "Hotel not found" });
+        }
+        res.status(200).json(hotel);  
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: "Server error" });
+    }
 };
+
+
 
 exports.searchHotels = async (req, res) => {
   try {

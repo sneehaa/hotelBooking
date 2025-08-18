@@ -1,8 +1,11 @@
+// index.js
 const express = require('express');
 const dotenv = require('dotenv');
 const rabbitmq = require('./utils/rabbitmq');
 const connectDB = require('./database/db');
-const walletService = require('./services/walletServices');
+const walletService = require('./services/walletServices'); // This object doesn't contain setupEventListeners for event listening
+const { setupEventListeners } = require('./events/eventListener'); // This is the function you want to call
+
 
 dotenv.config();
 connectDB();
@@ -14,7 +17,7 @@ app.get('/', (req, res) => res.send('Wallet Service Running'));
 app.use('/api/wallet', require('./routes/walletRoutes'));
 
 rabbitmq.connect()
-    .then(() => walletService.setupEventListeners())
+    .then(() => setupEventListeners()) // <<< CHANGE THIS LINE
     .catch(err => console.error('Failed to connect to RabbitMQ:', err));
 
 const PORT = process.env.PORT || 5503;

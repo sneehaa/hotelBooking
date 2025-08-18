@@ -12,11 +12,16 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "amqplib": "^0.10.3",
+    "axios": "^1.11.0",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "mongoose": "^8.17.1",
+    "nodemailer": "^7.0.5",
+    "nodemailer-express-handlebars": "^7.0.0",
+    "nodemon": "^3.1.10",
     "rabbitmq": "^0.0.2",
     "redis": "^5.8.1"
   }

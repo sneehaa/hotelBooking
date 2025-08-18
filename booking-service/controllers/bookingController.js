@@ -1,7 +1,10 @@
 const bookingService = require('../services/bookingService');
 const rabbitmq = require('../utils/rabbitmq');
+
+
 const WALLET_EXCHANGE = 'wallet_events_exchange';
-const BOOKING_EXCHANGE = 'booking_requests_exchange';
+const BOOKING_REQUEST_EXCHANGE = 'booking_requests_exchange';
+const BOOKING_EVENTS_EXCHANGE = 'booking_events_exchange';
 
 exports.searchAvailableHotels = async (req, res) => {
     try {
@@ -14,7 +17,7 @@ exports.searchAvailableHotels = async (req, res) => {
         res.status(400).json({ success: false, message: err.message });
     }
 };
-
+     
 exports.createBooking = async (req, res) => {
     try {
         const userId = req.user.userId;
@@ -31,16 +34,16 @@ exports.createBooking = async (req, res) => {
         });
 
         await rabbitmq.publish(
-            BOOKING_EXCHANGE,
+            BOOKING_REQUEST_EXCHANGE,
             'booking.request',
             { bookingId: booking._id.toString(), userId, authToken }
         );
 
         console.log(`[Booking Controller] Booking request published to RabbitMQ for booking ID: ${booking._id}`);
-        res.status(202).json({ 
-            success: true, 
-            message: 'Booking request accepted for processing. Check booking status for updates.', 
-            bookingId: booking._id 
+        res.status(202).json({
+            success: true,
+            message: 'Booking request accepted for processing. Check booking status for updates.',
+            bookingId: booking._id
         });
     } catch (err) {
         console.error("[Booking Controller] Booking creation error:", err.message);
@@ -80,7 +83,6 @@ exports.cancelBooking = async (req, res) => {
     }
 };
 
-
 exports.payForBooking = async (req, res) => {
     try {
         const userId = req.user.userId;
@@ -92,7 +94,7 @@ exports.payForBooking = async (req, res) => {
             console.error(`[Booking Controller] Booking ${bookingId} not found for payment.`);
             return res.status(404).json({ success: false, message: "Booking not found." });
         }
-        const amountToPay = booking.price + 5; 
+        const amountToPay = booking.price;
         console.log(`[Booking Controller] Fetching booking ${bookingId} to get payment amount. Amount: ${amountToPay}`);
 
         await rabbitmq.publish(
@@ -108,3 +110,4 @@ exports.payForBooking = async (req, res) => {
         res.status(400).json({ success: false, message: error.message });
     }
 };
+

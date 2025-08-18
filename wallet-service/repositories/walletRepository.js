@@ -1,12 +1,14 @@
 const Wallet = require("../models/walletModel");
 
 exports.findByUserId = async (userId, session = null) => {
-    const query = Wallet.findOne({ userId });
+    const query = Wallet.findOne({ userId: userId.toString() }); 
+    
     if (session) {
         query.session(session);
     }
     return await query.exec();
 };
+
 
 exports.createWallet = async (walletData, session = null) => {
     const newWallet = new Wallet(walletData);
