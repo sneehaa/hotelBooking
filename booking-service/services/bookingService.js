@@ -16,7 +16,7 @@ class BookingService {
   
   if (hotels) {
     hotels = JSON.parse(hotels);
-  } else {xw
+  } else {
     const { data } = await axios.get(
       `${process.env.HOTEL_SERVICE_URL}/search`,
       { params: { location } }
