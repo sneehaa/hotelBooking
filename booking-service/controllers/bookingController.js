@@ -8,9 +8,9 @@ const BOOKING_EVENTS_EXCHANGE = 'booking_events_exchange';
 
 exports.searchAvailableHotels = async (req, res) => {
     try {
-        const { location, startDate, endDate } = req.query;
-        console.log(`[Booking Controller] Search request received for location: ${location}, dates: ${startDate} to ${endDate}`);
-        const results = await bookingService.searchAvailableHotels(location, startDate, endDate);
+        const { location } = req.query; 
+        console.log(`[Booking Controller] Search request received for location: ${location}`);
+        const results = await bookingService.searchAvailableHotels(location);
         res.status(200).json({ success: true, results });
     } catch (err) {
         console.error("[Booking Controller] Error in searchAvailableHotels:", err.message);

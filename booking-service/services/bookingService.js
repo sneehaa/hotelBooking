@@ -10,12 +10,12 @@ const BOOKING_EVENTS_EXCHANGE = "booking_events_exchange";
 
 class BookingService {
 
-  async searchAvailableHotels(location, startDate, endDate) {
+  async searchAvailableHotels(location) {
   const key = `hotels:search:${location.toLowerCase()}`;
   let hotels = await redisClient.get(key);
   
   if (hotels) {
-    hotels = JSON.parse(hotels);
+    return JSON.parse(hotels);
   } else {
     const { data } = await axios.get(
       `${process.env.HOTEL_SERVICE_URL}/search`,
@@ -25,28 +25,9 @@ class BookingService {
     if (hotels.length) {
       await redisClient.setEx(key, 300, JSON.stringify(hotels));
     }
+    return hotels;
   }
 
-  const results = await Promise.all(
-    hotels.map(async (hotel) => {
-      const roomsWithAvailability = await Promise.all(
-        hotel.rooms.map(async (room) => {
-          if (!room.isAvailable) return { ...room, isAvailable: false };
-          
-          const conflict = await bookingRepo.findConflictingBooking(
-            hotel._id,
-            room.roomNumber,
-            startDate,
-            endDate
-          );
-          return { ...room, isAvailable: !conflict };
-        })
-      );
-      return { ...hotel, rooms: roomsWithAvailability };
-    })
-  );
-
-  return results;
 }
 
 

@@ -18,13 +18,13 @@ class HotelRepository {
       throw new Error(`Could not fetch room price: ${error.message}`);
     }
   }
-    async searchAvailableHotels(location, startDate, endDate) {
-        const key = `hotels:${location}:${startDate}:${endDate}`;
+    async searchAvailableHotels(location) {
+        const key = `hotels:${location}`;
         const cached = await redisClient.get(key);
         if (cached) return JSON.parse(cached);
 
         const { data } = await axios.get(`${process.env.HOTEL_SERVICE_URL}/search`, {
-            params: { location, startDate, endDate }
+            params: { location }
         });
 
         const results = Array.isArray(data) ? data : (data.results || []);
