@@ -14,7 +14,6 @@ async function startEmailService() {
   console.log("Starting Email Service...");
   await rabbitmq.connect();
 
-  // booking created acknowledge
   await rabbitmq.consume(
     BOOKING_EVENTS_EXCHANGE,
     'email_booking_created_queue',
@@ -26,7 +25,6 @@ async function startEmailService() {
     }
   );
 
-  // booking confirmed
   await rabbitmq.consume(
     BOOKING_EVENTS_EXCHANGE,
     'email_booking_confirmed_queue',
@@ -38,7 +36,6 @@ async function startEmailService() {
     }
   );
 
-  // booking payment confirmed
   await rabbitmq.consume(
     BOOKING_EVENTS_EXCHANGE,
     'email_booking_payment_queue',
@@ -50,7 +47,6 @@ async function startEmailService() {
     }
   );
 
-  // booking bancelled
   await rabbitmq.consume(
     BOOKING_EVENTS_EXCHANGE,
     'email_booking_cancelled_queue',
